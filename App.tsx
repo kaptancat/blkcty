@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useEffect } from 'react';
 import { useCityState } from './hooks/useCityState';
 import { Dashboard } from './components/Dashboard';
@@ -27,11 +29,22 @@ const App: React.FC = () => {
   const [activeSlotIndex, setActiveSlotIndex] = useState<number>(-1);
   const [buildingToDemolish, setBuildingToDemolish] = useState<BuildingSlot | null>(null);
   const [showMarket, setShowMarket] = useState(false);
-  const [lang, setLang] = useState<Language>('TR');
+  
+  // Load Language from LocalStorage or default to TR
+  const [lang, setLang] = useState<Language>(() => {
+      const saved = localStorage.getItem('grandCityLang');
+      return (saved as Language) || 'TR';
+  });
+  
   const [isMuted, setIsMuted] = useState(false);
   
   // State to hold the target planet during the landing sequence
   const [landingTarget, setLandingTarget] = useState<Planet>('MARS');
+
+  // Persist Language Selection
+  useEffect(() => {
+      localStorage.setItem('grandCityLang', lang);
+  }, [lang]);
 
   const t = TRANSLATIONS[lang];
 
