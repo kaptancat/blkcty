@@ -1,6 +1,4 @@
 
-
-
 import React, { useState, useEffect } from 'react';
 import { useCityState } from './hooks/useCityState';
 import { Dashboard } from './components/Dashboard';
@@ -11,8 +9,13 @@ import { MarsJourney } from './components/MarsJourney';
 import { MarketModal } from './components/MarketModal';
 import { DemolitionView } from './components/DemolitionView';
 import { MainMenu } from './components/MainMenu';
+import { AdMobOverlay } from './components/AdMobOverlay'; // Import Ad Component
 import { BuildingSlot, BuildingStatus, Language, TRANSLATIONS, Planet, STYLES_CONFIG, MARS_STYLES_CONFIG, VENUS_STYLES_CONFIG, JUPITER_STYLES_CONFIG, SATURN_STYLES_CONFIG, URANUS_STYLES_CONFIG, NEPTUNE_STYLES_CONFIG, MERCURY_STYLES_CONFIG } from './types';
 import { audioService } from './services/audioService';
+
+// ADMOB CONFIGURATION
+const ADMOB_PUB_ID = "ca-app-pub-1915886199506068";
+const ADMOB_SLOT_ID = "5571404762";
 
 const App: React.FC = () => {
   const { 
@@ -30,6 +33,10 @@ const App: React.FC = () => {
   const [buildingToDemolish, setBuildingToDemolish] = useState<BuildingSlot | null>(null);
   const [showMarket, setShowMarket] = useState(false);
   
+  // AD STATE
+  const [showAd, setShowAd] = useState(false);
+  const [pendingAdAction, setPendingAdAction] = useState<(() => void) | null>(null);
+
   // Load Language from LocalStorage or default to TR
   const [lang, setLang] = useState<Language>(() => {
       const saved = localStorage.getItem('grandCityLang');
@@ -93,9 +100,8 @@ const App: React.FC = () => {
   const handleStartLanding = () => {
       let target: Planet = 'MARS';
       
-      // Logic to determine target based on unlocks (Same logic as Dashboard)
+      // Logic to determine target based on unlocks
       if (adminMode) {
-          // In admin mode, cycle or pick specific? For now, standard logic or direct override
           if (!meta.marsUnlocked) target = 'MARS';
           else if (!meta.venusUnlocked) target = 'VENUS';
           else if (!meta.mercuryUnlocked) target = 'MERCURY';
@@ -155,36 +161,84 @@ const App: React.FC = () => {
     setBuildingToDemolish(null);
   };
 
-  const handleGameClose = (result?: { floors: number; pop: number; type: 'RENT' | 'SELL' } | 'LAUNCH_COMPLETE' | 'LANDING_COMPLETE') => {
+  // Helper to trigger Ad
+  const triggerAd = (nextAction: () => void) => {
+      setPendingAdAction(() => nextAction);
+      setShowAd(true);
+  };
+
+  const handleAdClose = () => {
+      setShowAd(false);
+      if (pendingAdAction) {
+          pendingAdAction();
+          setPendingAdAction(null);
+      }
+  };
+
+  const handleGameClose = (result?: { floors: number; pop: number; type: 'RENT' | 'SELL' } | 'LAUNCH_COMPLETE' | 'LANDING_COMPLETE' | 'LAUNCH_FAILED' | 'CONSUME_AUTOPILOT') => {
+    // 1. ROCKET LAUNCH (Level Up to Space)
     if (result === 'LAUNCH_COMPLETE') {
-        launchRocket(); 
-        setView('JOURNEY');
+        triggerAd(() => {
+            launchRocket(); 
+            setView('JOURNEY');
+        });
         return;
     }
 
+    // 2. LANDING SUCCESS (Level Up to New Planet)
     if (result === 'LANDING_COMPLETE') {
-        unlockPlanet(landingTarget);
-        handlePlanetSwitch(landingTarget);
+        triggerAd(() => {
+            unlockPlanet(landingTarget);
+            handlePlanetSwitch(landingTarget);
+            setView('DASHBOARD');
+        });
+        return;
+    }
+
+    // 3. LAUNCH FAILED
+    if (result === 'LAUNCH_FAILED') {
         setView('DASHBOARD');
         return;
     }
 
-    if (result && activeSlotIndex !== -1 && typeof result !== 'string') {
-      if (result.type === 'SELL') {
-        const cashEarned = (result.floors * 150) + (result.pop * 50);
-        updateCash(Math.floor(cashEarned));
-      } else {
-        const newBuilding: BuildingSlot = {
-          id: Math.random().toString(36).substr(2, 9),
-          floors: result.floors,
-          pop: result.pop,
-          status: BuildingStatus.RENTED,
-          styleId: meta.activeStyleId,
-          timestamp: Date.now()
-        };
-        addBuilding(activeSlotIndex, newBuilding, currentPlanet);
-      }
+    // 4. AUTOPILOT CONSUME
+    if (result === 'CONSUME_AUTOPILOT') {
+        // Just consume charge, game stays active
+        meta.autoPilotCharges = Math.max(0, (meta.autoPilotCharges || 0) - 1);
+        return; 
     }
+
+    // 5. BUILDING COMPLETED (Level Up Floors)
+    if (result && activeSlotIndex !== -1 && typeof result !== 'string') {
+      const finishLogic = () => {
+          if (result.type === 'SELL') {
+            const cashEarned = (result.floors * 150) + (result.pop * 50);
+            updateCash(Math.floor(cashEarned));
+          } else {
+            const newBuilding: BuildingSlot = {
+              id: Math.random().toString(36).substr(2, 9),
+              floors: result.floors,
+              pop: result.pop,
+              status: BuildingStatus.RENTED,
+              styleId: meta.activeStyleId,
+              timestamp: Date.now()
+            };
+            addBuilding(activeSlotIndex, newBuilding, currentPlanet);
+          }
+          setView('DASHBOARD');
+          setActiveSlotIndex(-1);
+      };
+
+      // Show AD if floors > 10 (Significant progress)
+      if (result.floors >= 10) {
+          triggerAd(finishLogic);
+      } else {
+          finishLogic();
+      }
+      return;
+    }
+
+    // Default Cancel / Exit
     setView('DASHBOARD');
     setActiveSlotIndex(-1);
   };
@@ -214,6 +268,15 @@ const App: React.FC = () => {
   return (
     <div className="relative w-full h-[100dvh] overflow-hidden text-slate-100 select-none font-sans">
       
+      {/* ADMOB OVERLAY */}
+      {showAd && (
+          <AdMobOverlay 
+              onClose={handleAdClose} 
+              publisherId={ADMOB_PUB_ID}
+              slotId={ADMOB_SLOT_ID}
+          />
+      )}
+
       {currentPlanet === 'EARTH' ? (
           <CityBackground season={meta.currentSeason || 'SPRING'} />
       ) : (
